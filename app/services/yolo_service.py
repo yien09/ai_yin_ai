@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from ultralytics import YOLO
 import logging
 
 logger = logging.getLogger(__name__)
@@ -8,16 +7,20 @@ logger = logging.getLogger(__name__)
 class YoloService:
     def __init__(self):
         try:
-            # Load standard YOLOv8n model
-            self.model = YOLO("yolov8n.pt")
-            logger.info("YOLOv8 model loaded successfully.")
+            # Load pre-trained frontal face Haar cascade classifier from OpenCV
+            self.face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            )
+            self.model = self.face_cascade  # keep this property for compatibility
+            logger.info("OpenCV Face Cascade loaded successfully.")
         except Exception as e:
-            logger.error(f"Failed to load YOLOv8 model: {e}")
+            logger.error(f"Failed to load Face Cascade: {e}")
+            self.face_cascade = None
             self.model = None
 
     def validate_face(self, image_bytes: bytes) -> dict:
-        if self.model is None:
-            return {"face_detected": False, "confidence_score": 0.0, "error": "Model not loaded"}
+        if self.face_cascade is None:
+            return {"face_detected": False, "confidence_score": 0.0, "error": "Cascade classifier not loaded"}
 
         try:
             # Convert bytes to numpy array
@@ -27,46 +30,31 @@ class YoloService:
             if img is None:
                 return {"face_detected": False, "confidence_score": 0.0, "error": "Failed to decode image"}
 
-            # Run inference
-            results = self.model(img)
-            
-            # Look for a "person" (class 0 in COCO dataset) or any detection
-            person_detected = False
-            max_conf = 0.0
+            # Convert to grayscale for detection
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-            for result in results:
-                boxes = result.boxes
-                for box in boxes:
-                    cls_id = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    # Class 0 is person in yolov8n.pt
-                    if cls_id == 0:
-                        person_detected = True
-                        if conf > max_conf:
-                            max_conf = conf
+            # Detect faces
+            faces = self.face_cascade.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(30, 30)
+            )
 
-            # If we detect a person, count it as a face match for check-in
-            if person_detected:
+            if len(faces) > 0:
+                # Haar cascades don't give a traditional confidence score directly like deep learning,
+                # but we can simulate a high confidence score if a face is clearly detected.
+                # In Haar cascades, detection is binary, so we return a fallback confidence score.
                 return {
                     "face_detected": True,
-                    "confidence_score": max_conf,
-                    "message": "Face/Person validation successful"
+                    "confidence_score": 0.95,
+                    "message": f"Face validation successful ({len(faces)} face(s) detected)"
                 }
-            
-            # If no person is detected but there are other detections, use the highest confidence
-            if len(results) > 0 and len(results[0].boxes) > 0:
-                highest_conf = float(results[0].boxes.conf[0])
-                if highest_conf > 0.5:
-                    return {
-                        "face_detected": True,
-                        "confidence_score": highest_conf,
-                        "message": "Detection successful"
-                    }
 
             return {
                 "face_detected": False,
                 "confidence_score": 0.0,
-                "message": "No face or person detected in the image"
+                "message": "No face detected in the image"
             }
 
         except Exception as e:
