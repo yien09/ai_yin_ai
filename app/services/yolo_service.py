@@ -30,9 +30,11 @@ class YoloService:
             # Run inference
             results = self.model(img)
             
-            # Look for a "person" (class 0 in COCO dataset) or any detection
+            img_h, img_w, _ = img.shape
             person_detected = False
             max_conf = 0.0
+            is_centered = False
+            is_size_valid = False
 
             for result in results:
                 boxes = result.boxes
@@ -44,29 +46,49 @@ class YoloService:
                         person_detected = True
                         if conf > max_conf:
                             max_conf = conf
+                            
+                        # Get bounding box coordinates
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                        box_w = x2 - x1
+                        box_h = y2 - y1
+                        
+                        # Calculate centers
+                        x_center = (x1 + x2) / 2.0
+                        y_center = (y1 + y2) / 2.0
+                        
+                        # Check if person is centered (within 25% tolerance from the image center)
+                        center_x_diff = abs(x_center - (img_w / 2.0)) / img_w
+                        center_y_diff = abs(y_center - (img_h / 2.0)) / img_h
+                        if center_x_diff <= 0.25 and center_y_diff <= 0.25:
+                            is_centered = True
+                            
+                        # Check if person size is valid (occupies at least 30% of width or height)
+                        if (box_w / img_w) >= 0.30 or (box_h / img_h) >= 0.30:
+                            is_size_valid = True
 
-            # If we detect a person, count it as a face match for check-in
             if person_detected:
+                if not is_centered:
+                    return {
+                        "face_detected": False,
+                        "confidence_score": max_conf,
+                        "message": "Posisikan wajah Anda di tengah bingkai outline"
+                    }
+                if not is_size_valid:
+                    return {
+                        "face_detected": False,
+                        "confidence_score": max_conf,
+                        "message": "Dekatkan wajah Anda ke kamera sesuai bingkai"
+                    }
                 return {
                     "face_detected": True,
                     "confidence_score": max_conf,
-                    "message": "Face/Person validation successful using YOLOv8"
+                    "message": "Validasi wajah menggunakan YOLOv8 berhasil"
                 }
-            
-            # If no person is detected but there are other detections, use the highest confidence
-            if len(results) > 0 and len(results[0].boxes) > 0:
-                highest_conf = float(results[0].boxes.conf[0])
-                if highest_conf > 0.5:
-                    return {
-                        "face_detected": True,
-                        "confidence_score": highest_conf,
-                        "message": "Detection successful using YOLOv8"
-                    }
 
             return {
                 "face_detected": False,
                 "confidence_score": 0.0,
-                "message": "No face or person detected in the image using YOLOv8"
+                "message": "Wajah tidak terdeteksi oleh AI. Silakan posisikan wajah Anda ke kamera."
             }
 
         except Exception as e:
